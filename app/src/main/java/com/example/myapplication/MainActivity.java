@@ -4,8 +4,10 @@ import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.os.Bundle;
+import android.text.InputType;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
@@ -14,7 +16,10 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.appcompat.app.AlertDialog;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.UUID;
 
@@ -23,24 +28,17 @@ public class MainActivity extends Activity {
     private static final String TAG = "MainActivity";
     private static final int REQUEST_ENABLE_BT = 1;
 
-    // MY_UUID: UUID приложения, используемый для установки соединения по протоколу RFCOMM
+
     private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+    private String DEVICE_ADDRESS = "98:DA:50:01:B2:53";
 
-    // DEVICE_ADDRESS: MAC-адрес удаленного Bluetooth-устройства, с которым устанавливается соединение
-    private static final String DEVICE_ADDRESS = "98:DA:50:01:B2:53"; // здесь нужно указать адрес своего модуля HC-05
-
-    // bluetoothAdapter: объект Bluetooth адаптера, который используется для работы с
-    // Bluetooth-устройствами
     private BluetoothAdapter bluetoothAdapter;
-
-    // bluetoothSocket: сокет Bluetooth-соединения, установленного с удаленным устройством
     private BluetoothSocket bluetoothSocket;
-
-    // outputStream: выходной поток сокета, используется для отправки данных на удаленное устройство
     private OutputStream outputStream;
+    private InputStream inputStream;
 
-    // textView: текстовое поле для вывода сообщений о статусе соединения с удаленным устройством
     private TextView textView;
+    private TextView receivedTextView;
     private EditText editText;
     private Button button;
 
@@ -51,10 +49,13 @@ public class MainActivity extends Activity {
         // Устанавливаем макет для активности
         setContentView(R.layout.activity_main);
 
+        showMacAddressDialog();
+
         // Находим элементы интерфейса по идентификаторам
         Button sendButton = findViewById(R.id.button);
         final EditText editText = findViewById(R.id.editText);
         textView = findViewById(R.id.textView);
+        receivedTextView = findViewById(R.id.receivedTextView);
 
         // Устанавливаем обработчик нажатия кнопки sendButton
         sendButton.setOnClickListener(new View.OnClickListener() {
@@ -74,7 +75,6 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Bluetooth not supported", Toast.LENGTH_LONG).show();
                 return;
             }
-
             if (!bluetoothAdapter.isEnabled()) {
                 // Если Bluetooth выключен, выводим запрос на включение Bluetooth
                 Intent enableBluetoothIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
@@ -90,24 +90,56 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void showMacAddressDialog() {
+        // Создаем диалог
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Enter remote device MAC-address");
+
+        // Создаем поле ввода и добавляем его в диалог
+        final EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setMaxLines(1);
+        input.setHint("98:DA:50:01:B2:53"); // Подсказка с примером MAC-адреса
+        builder.setView(input);
+
+        // Добавляем кнопки "ОК" и "Отмена"
+        builder.setPositiveButton("OK", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                if (!TextUtils.isEmpty(input.getText().toString())) {
+                    DEVICE_ADDRESS = input.getText().toString();
+                }
+                // Здесь можно выполнить дополнительные действия с полученным MAC-адресом
+            }
+        });
+        builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                // Закрываем диалог и выходим из приложения
+                finish();
+            }
+        });
+
+        // Показываем диалог
+        builder.show();
+    }
+
     /*onActivityResult() - это метод обратного вызова, который вызывается, когда ответ приходит из
     другой активности (в данном случае активности включения Bluetooth). Он вызывается после завершения
     активности и передает результат обратно в основную активность, которая вызвала эту активность.*/
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-
         // Если requestCode не равен REQUEST_ENABLE_BT, значит это не наш запрос, сообщение об ошибке
         if (requestCode == REQUEST_ENABLE_BT) {
             // Проверяем результат, который был передан нам из активности включения Bluetooth
-            // Если он равен RESULT_OK, значит Bluetooth включен
             if (resultCode == RESULT_OK) {
-                Toast.makeText(this, "Bluetooth включен", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Bluetooth is ON", Toast.LENGTH_LONG).show();
             } else {
-                Toast.makeText(this, "Bluetooth не включен", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Bluetooth is OFF", Toast.LENGTH_LONG).show();
             }
         } else {
-            Toast.makeText(this, "Ошибка включения Bluetooth", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Bluetooth activation error", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -124,9 +156,38 @@ public class MainActivity extends Activity {
                 bluetoothSocket.connect();
                 // Получаем выходной поток сокета, для отправки данных на удаленное устройство
                 outputStream = bluetoothSocket.getOutputStream();
+                // Получаем входной поток сокета, для приема ответных сообщений от удаленного устройства
+                inputStream = bluetoothSocket.getInputStream();
                 // Если выходной поток не равен null, значит соединение установлено успешно
                 if (outputStream != null) {
-                    textView.setText("Connected to Bluetooth device");
+                    textView.setText("Connected to Bluetooth device: " + device.getName());
+                    // Создаем поток для приема ответных сообщений от удаленного устройства
+                    new Thread(new Runnable() {
+                        @Override
+                        public void run() {
+                            byte[] buffer = new byte[1024];
+                            int bytes;
+
+                            while (true) {
+                                try {
+                                    // Читаем данные из входного потока
+                                    bytes = inputStream.read(buffer);
+                                    // Преобразуем полученные данные в строку
+                                    final String receivedMessage = new String(buffer, 0, bytes);
+                                    // Выводим полученное сообщение в текстовое поле
+                                    runOnUiThread(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            receivedTextView.setText("Received message: " + receivedMessage);
+                                        }
+                                    });
+                                } catch (IOException e) {
+                                    Log.e(TAG, "Error reading from input stream: " + e.getMessage());
+                                    break;
+                                }
+                            }
+                        }
+                    }).start();
                 } else {
                     textView.setText("Not connected to Bluetooth device");
                 }
@@ -176,5 +237,4 @@ public class MainActivity extends Activity {
             }
         }
     }
-
 }
